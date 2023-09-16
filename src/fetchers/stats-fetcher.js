@@ -54,6 +54,9 @@ const GRAPHQL_STATS_QUERY = `
       pullRequests(first: 1) {
         totalCount
       }
+      mergedPullRequests: pullRequests(states: MERGED) {
+        totalCount
+      }
       openIssues: issues(states: OPEN) {
         totalCount
       }
@@ -75,11 +78,15 @@ const GRAPHQL_STATS_QUERY = `
 `;
 
 /**
+ * @typedef {import('axios').AxiosResponse} AxiosResponse Axios response.
+ */
+
+/**
  * Stats fetcher object.
  *
- * @param {import('axios').AxiosRequestHeaders} variables Fetcher variables.
+ * @param {object} variables Fetcher variables.
  * @param {string} token GitHub token.
- * @returns {Promise<import('../common/types').Fetcher>} Stats fetcher response.
+ * @returns {Promise<AxiosResponse>} Axios response.
  */
 const fetcher = (variables, token) => {
   const query = !variables.after ? GRAPHQL_STATS_QUERY : GRAPHQL_REPOS_QUERY;
@@ -98,7 +105,7 @@ const fetcher = (variables, token) => {
  * Fetch stats information for a given username.
  *
  * @param {string} username Github username.
- * @returns {Promise<import('../common/types').StatsFetcher>} GraphQL Stats object.
+ * @returns {Promise<AxiosResponse>} Axios response.
  *
  * @description This function supports multi-page fetching if the 'FETCH_MULTI_PAGE_STARS' environment variable is set to true.
  */
@@ -109,7 +116,9 @@ const statsFetcher = async (username) => {
   while (hasNextPage) {
     const variables = { login: username, first: 100, after: endCursor };
     let res = await retryer(fetcher, variables);
-    if (res.data.errors) return res;
+    if (res.data.errors) {
+      return res;
+    }
 
     // Store stats data.
     const repoNodes = res.data.data.user.repositories.nodes;
@@ -136,7 +145,7 @@ const statsFetcher = async (username) => {
 /**
  * Fetch all the commits for all the repositories of a given username.
  *
- * @param {*} username GitHub username.
+ * @param {string} username GitHub username.
  * @returns {Promise<number>} Total commits.
  *
  * @description Done like this because the GitHub API does not provide a way to fetch all the commits. See
@@ -176,22 +185,31 @@ const totalCommitsFetcher = async (username) => {
 };
 
 /**
+ * @typedef {import("./types").StatsData} StatsData Stats data.
+ */
+
+/**
  * Fetch stats for a given username.
  *
  * @param {string} username GitHub username.
  * @param {boolean} include_all_commits Include all commits.
- * @returns {Promise<import("./types").StatsData>} Stats data.
+ * @param {string[]} exclude_repo Repositories to exclude.
+ * @returns {Promise<StatsData>} Stats data.
  */
 const fetchStats = async (
   username,
   include_all_commits = false,
   exclude_repo = [],
 ) => {
-  if (!username) throw new MissingParamError(["username"]);
+  if (!username) {
+    throw new MissingParamError(["username"]);
+  }
 
   const stats = {
     name: "",
     totalPRs: 0,
+    totalPRsMerged: 0,
+    mergedPRsPercentage: 0,
     totalReviews: 0,
     totalCommits: 0,
     totalIssues: 0,
@@ -237,6 +255,9 @@ const fetchStats = async (
   }
 
   stats.totalPRs = user.pullRequests.totalCount;
+  stats.totalPRsMerged = user.mergedPullRequests.totalCount;
+  stats.mergedPRsPercentage =
+    (user.mergedPullRequests.totalCount / user.pullRequests.totalCount) * 100;
   stats.totalReviews =
     user.contributionsCollection.totalPullRequestReviewContributions;
   stats.totalIssues = user.openIssues.totalCount + user.closedIssues.totalCount;
